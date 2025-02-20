@@ -1,4 +1,4 @@
-UserID,Age,Gender,Education,Skills,Interests,Preferred Industry,Career Label
+UserID,Age,Gender,Education,Skills,Interests,Preferred Industry,career label
 1,47,Female,Master's,"Design, Marketing, Engineering","Technology, Arts",Engineering,Teacher
 2,19,Female,PhD,"Healthcare, Programming",Healthcare,Entertainment,Artist
 3,33,Male,Bachelor's,"Healthcare, Writing",Arts,IT,Marketing Manager
