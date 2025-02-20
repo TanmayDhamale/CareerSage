@@ -1,0 +1,70 @@
+# .gitignore
+
+.venv
+
+#model
+*.pkl
+*.h5
+
+
+# Node.js
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Logs
+logs/
+*.log
+*.log.*
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDEs and editors
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+
+# Java
+*.class
+*.jar
+*.war
+*.ear
+
+# C/C++
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Build directories
+build/
+dist/
+out/
+
+# Environment variables
+.env
+
+# macOS
+*.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
