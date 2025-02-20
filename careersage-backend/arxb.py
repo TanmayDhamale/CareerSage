@@ -16,7 +16,7 @@ from sklearn.metrics import accuracy_score
 import joblib
 
 # Load Dataset
-df = pd.read_csv("/Users/tanmay/Developer/CareerSage/careersage-backend/career_recommendation_processed.csv")
+df = pd.read_csv("/Users/tanmay/Developer/CareerSage/careersage-backend/career_recommendation_processed_numeric.csv")
 
 # Ensure Column Names Are Clean
 df.columns = df.columns.str.strip()
