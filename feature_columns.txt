@@ -1,0 +1,16 @@
+UserID
+Age
+Gender
+Education
+Preferred Industry
+Writing
+Finance
+Programming
+Engineering
+Healthcare
+Design
+Marketing
+Technology
+Entertainment
+Sports
+Arts

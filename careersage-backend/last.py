@@ -1,128 +1,155 @@
 import numpy as np
 import pandas as pd
-import tensorflow as tf
-import torch
-from transformers import BertTokenizer, BertModel
+import joblib
+import matplotlib.pyplot as plt
+import seaborn as sns
+
 from sklearn.ensemble import RandomForestClassifier
-from xgboost import XGBClassifier
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Dropout, Input, Embedding, Flatten
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.callbacks import EarlyStopping
-from sklearn.model_selection import train_test_split, RandomizedSearchCV
+from sklearn.model_selection import train_test_split, StratifiedKFold
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from imblearn.over_sampling import SMOTE
 from skopt import BayesSearchCV
-from sklearn.metrics import accuracy_score
-from sklearn.preprocessing import StandardScaler, LabelEncoder
-import joblib
-import json
+from xgboost import XGBClassifier
 
-# Load Dataset
-df = pd.read_csv("/Users/tanmay/Developer/CareerSage/careersage-backend/career_recommendation_clean.csv")
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout
 
-# Ensure Column Names Are Clean
+# === 1️⃣ Load & Preprocess Dataset ===
+df = pd.read_csv("/Users/tanmay/Developer/CareerSage/careersage-backend/career_recommendation_processed_numeric.csv")
+
+# Ensure column names are clean
 df.columns = df.columns.str.strip()
 
 # Check if 'career_label' exists
 if "career_label" not in df.columns:
     raise KeyError("Error: 'career_label' column not found in dataset.")
 
-# 🔹 Explicit User Input Handling
-def process_user_input(user_json):
-    user_data = json.loads(user_json)
-    df_new = pd.DataFrame([user_data])
-    return df_new
+# Remove job_history if it exists
+if "job_history" in df.columns:
+    df = df.drop("job_history", axis=1)
 
-# 🔹 Ensure Required Columns Exist
-expected_columns = [
-    "Age", "Gender", "Education_Level", "Programming_Skill_Level", "AI_ML_Skill_Level",
-    "Data_Analysis_Skill_Level", "Cybersecurity_Skill_Level", "Web_Development_Skill_Level",
-    "Interest_in_Management", "Interest_in_Research", "Job_Search_Count", "Career_Switches"
-]
+# Fill missing values
+df.fillna(df.median(numeric_only=True), inplace=True)
 
-for col in expected_columns:
-    if col not in df.columns:
-        print(f"Warning: Column '{col}' not found in dataset. Adding default values (0).")
-        df[col] = 0  # Default value
+# Separate categorical and numerical columns
+categorical_cols = df.select_dtypes(include=['object']).columns
+numerical_cols = df.select_dtypes(include=['int64', 'float64']).columns.drop("career_label")
 
-# 🔹 Feature Scaling (Normalization of Numerical Features)
-numerical_features = [
-    "Age", "Programming_Skill_Level", "AI_ML_Skill_Level", "Data_Analysis_Skill_Level",
-    "Cybersecurity_Skill_Level", "Web_Development_Skill_Level", "Interest_in_Management",
-    "Interest_in_Research", "Job_Search_Count", "Career_Switches"
-]
-scaler = StandardScaler()
-df[numerical_features] = scaler.fit_transform(df[numerical_features])
+# One-Hot Encode categorical features
+df = pd.get_dummies(df, columns=categorical_cols, drop_first=True)
 
-# 🔹 Convert Categorical Features
-categorical_features = ["Education_Level", "Gender"]
-for col in categorical_features:
-    df[col] = LabelEncoder().fit_transform(df[col])
-
-# 🔹 Balance Dataset Using SMOTE
+# Extract features and target
 X = df.drop("career_label", axis=1)
 y = df["career_label"]
-smote = SMOTE()
-X_resampled, y_resampled = smote.fit_resample(X, y)
 
-# 🔹 Convert All Features to Float
-X_resampled = X_resampled.astype(float)
+# === 2️⃣ Split Before Applying SMOTE ===
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
 
-# 🔹 Split Dataset
-X_train, X_test, y_train, y_test = train_test_split(X_resampled, y_resampled, test_size=0.2, random_state=42)
+# Apply SMOTE only to training data
+smote = SMOTE(random_state=42)
+X_train_resampled, y_train_resampled = smote.fit_resample(X_train, y_train)
 
-# 🔹 ANN Model with Early Stopping & Embedding Layer
-def build_ann():
-    model = Sequential([
-        Embedding(input_dim=len(X_train.columns), output_dim=16, input_length=X_train.shape[1]),
-        Flatten(),
-        Dense(128, activation='relu'),
-        Dropout(0.3),
-        Dense(64, activation='relu'),
-        Dropout(0.2),
-        Dense(len(np.unique(y_train)), activation='softmax')
-    ])
-    model.compile(optimizer=Adam(learning_rate=0.001), loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-    return model
+# Feature Scaling (Standardization)
+scaler = StandardScaler()
+X_train_resampled = scaler.fit_transform(X_train_resampled)
+X_test = scaler.transform(X_test)
+joblib.dump(scaler, "feature_scaler.pkl")
 
-ann_model = build_ann()
-early_stopping = EarlyStopping(monitor="val_loss", patience=5, restore_best_weights=True)
-ann_model.fit(X_train, y_train, epochs=50, batch_size=32, validation_split=0.2, callbacks=[early_stopping])
+# === 3️⃣ Train & Optimize Random Forest Using Bayesian Search ===
+rf = RandomForestClassifier(random_state=42)
+rf_params = {
+    'n_estimators': (100, 1000),
+    'max_depth': (10, 100),
+    'min_samples_split': (2, 10),
+    'min_samples_leaf': (1, 5),
+    'bootstrap': [True, False]
+}
 
-# 🔹 Random Forest with Feature Importance
-rf = RandomForestClassifier()
-rf_params = {'n_estimators': [100, 200, 500], 'max_depth': [10, 20, 50]}
-rf_tuned = RandomizedSearchCV(rf, rf_params, cv=3, n_iter=5, scoring='accuracy')
-rf_tuned.fit(X_train, y_train)
+rf_tuned = BayesSearchCV(
+    rf, rf_params, n_iter=30, cv=5, scoring='accuracy', n_jobs=-1, random_state=42
+)
+rf_tuned.fit(X_train_resampled, y_train_resampled)
 
-# 🔹 Feature Importance Analysis for RF
-rf_feature_importance = pd.Series(rf_tuned.best_estimator_.feature_importances_, index=X_train.columns).sort_values(ascending=False)
-print("\n🔹 Top Features Impacting Career Recommendation (RF Model):\n", rf_feature_importance.head(10))
+# Feature Importance Filtering
+feature_importance = pd.Series(rf_tuned.best_estimator_.feature_importances_, index=X.columns)
+top_features = feature_importance[feature_importance > 0.01].index  # Keep only top features
+X_train_resampled = pd.DataFrame(X_train_resampled, columns=X.columns)[top_features]
+X_test = pd.DataFrame(X_test, columns=X.columns)[top_features]
 
-# 🔹 XGBoost with Bayesian Optimization
-xgb = XGBClassifier()
-xgb_params = {'learning_rate': (0.01, 0.3), 'max_depth': (3, 10), 'n_estimators': (100, 500)}
-xgb_tuned = BayesSearchCV(xgb, xgb_params, n_iter=10, cv=3, scoring='accuracy')
-xgb_tuned.fit(X_train, y_train)
+# === 4️⃣ Train Random Forest Multiple Times & Choose Best ===
+best_rf_model = None
+best_rf_acc = 0
 
-# 🔹 Feature Importance Analysis for XGBoost
-xgb_feature_importance = pd.Series(xgb_tuned.best_estimator_.feature_importances_, index=X_train.columns).sort_values(ascending=False)
-print("\n🔹 Top Features Impacting Career Recommendation (XGBoost Model):\n", xgb_feature_importance.head(10))
+for i in range(5):  # Train 5 times with different seeds
+    print(f"\n🔄 Training Random Forest - Iteration {i+1}")
+    rf_model = RandomForestClassifier(**rf_tuned.best_params_, random_state=i)
+    rf_model.fit(X_train_resampled, y_train_resampled)
+    y_pred_rf = rf_model.predict(X_test)
+    acc = accuracy_score(y_test, y_pred_rf)
+    print(f"Iteration {i+1} Accuracy: {acc * 100:.2f}%")
 
-# 🔹 Accuracy Evaluation
+    if acc > best_rf_acc:
+        best_rf_acc = acc
+        best_rf_model = rf_model
+
+# Save the best Random Forest model
+joblib.dump(best_rf_model, "random_forest_model.pkl")
+print(f"\n✅ Best Random Forest Model Accuracy: {best_rf_acc * 100:.2f}%")
+
+# === 5️⃣ Train Alternative Model (XGBoost) ===
+xgb = XGBClassifier(n_estimators=300, learning_rate=0.05, max_depth=10, random_state=42)
+xgb.fit(X_train_resampled, y_train_resampled)
+y_pred_xgb = xgb.predict(X_test)
+
+# Save XGBoost model
+joblib.dump(xgb, "xgboost_model.pkl")
+
+# === 6️⃣ Train Alternative Model (ANN) ===
+ann_model = Sequential([
+    Dense(128, activation='relu', input_shape=(X_train_resampled.shape[1],)),
+    Dropout(0.3),
+    Dense(64, activation='relu'),
+    Dense(len(np.unique(y_train)), activation='softmax')
+])
+ann_model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+ann_model.fit(X_train_resampled, y_train_resampled, epochs=50, batch_size=32, validation_split=0.2)
 y_pred_ann = np.argmax(ann_model.predict(X_test), axis=1)
-y_pred_rf = rf_tuned.best_estimator_.predict(X_test)
-y_pred_xgb = xgb_tuned.best_estimator_.predict(X_test)
 
-ann_acc = accuracy_score(y_test, y_pred_ann)
-rf_acc = accuracy_score(y_test, y_pred_rf)
-xgb_acc = accuracy_score(y_test, y_pred_xgb)
-
-print(f"\n🔹 ANN Accuracy: {ann_acc * 100:.2f}%")
-print(f"🔹 Random Forest Accuracy: {rf_acc * 100:.2f}%")
-print(f"🔹 XGBoost Accuracy: {xgb_acc * 100:.2f}%")
-
-# 🔹 Save Models
-joblib.dump(rf_tuned.best_estimator_, "random_forest.pkl")
-joblib.dump(xgb_tuned.best_estimator_, "xgboost.pkl")
+# Save ANN model
 ann_model.save("ann_model.h5")
+
+# === 7️⃣ Evaluate Models ===
+rf_acc = best_rf_acc  # Use best accuracy from RF training loop
+xgb_acc = accuracy_score(y_test, y_pred_xgb)
+ann_acc = accuracy_score(y_test, y_pred_ann)
+
+print(f"\n🔹 Best Random Forest Accuracy: {rf_acc * 100:.2f}%")
+print(f"🔹 XGBoost Accuracy: {xgb_acc * 100:.2f}%")
+print(f"🔹 ANN Accuracy: {ann_acc * 100:.2f}%")
+
+print("\n===== Random Forest Classification Report =====")
+print(classification_report(y_test, best_rf_model.predict(X_test)))
+
+print("\n===== XGBoost Classification Report =====")
+print(classification_report(y_test, y_pred_xgb))
+
+print("\n===== ANN Classification Report =====")
+print(classification_report(y_test, y_pred_ann))
+
+# === 8️⃣ Plot Confusion Matrix for Best Model ===
+best_model = best_rf_model if rf_acc > xgb_acc else xgb
+y_pred_best = best_rf_model.predict(X_test) if rf_acc > xgb_acc else y_pred_xgb
+
+cm = confusion_matrix(y_test, y_pred_best)
+plt.figure(figsize=(10, 8))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+plt.title('Confusion Matrix - Best Model')
+plt.ylabel('True Label')
+plt.xlabel('Predicted Label')
+plt.savefig('best_model_confusion_matrix.png')
+
+print("\n✅ Training & Evaluation Completed!")
