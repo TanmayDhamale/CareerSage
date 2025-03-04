@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 # Load Dataset
-df = pd.read_csv("/Users/tanmay/Developer/CareerSage/careersage-backend/career_recommendation_processed_numeric.csv")
+df = pd.read_csv("/Users/tanmay/Developer/CareerSage/careersage-backend/career_recommend ation_processed_numeric.csv")
 
 # Ensure Column Names Are Clean
 df.columns = df.columns.str.strip()

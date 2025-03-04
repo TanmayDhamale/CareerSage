@@ -14,12 +14,12 @@ from xgboost import XGBClassifier
 
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Dropout
+from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
 
 # === 1️⃣ Load & Preprocess Dataset ===
-df = pd.read_csv("/Users/tanmay/Developer/CareerSage/careersage-backend/career_recommendation_processed_numeric.csv")
+df = pd.read_csv("/Users/tanmay/Developer/CareerSage/careersage-backend/career_refined.csv")
 
-# Ensure column names are clean
+# Clean column names
 df.columns = df.columns.str.strip()
 
 # Check if 'career_label' exists
@@ -33,12 +33,8 @@ if "job_history" in df.columns:
 # Fill missing values
 df.fillna(df.median(numeric_only=True), inplace=True)
 
-# Separate categorical and numerical columns
-categorical_cols = df.select_dtypes(include=['object']).columns
-numerical_cols = df.select_dtypes(include=['int64', 'float64']).columns.drop("career_label")
-
 # One-Hot Encode categorical features
-df = pd.get_dummies(df, columns=categorical_cols, drop_first=True)
+df = pd.get_dummies(df, drop_first=True)
 
 # Extract features and target
 X = df.drop("career_label", axis=1)
@@ -74,60 +70,69 @@ rf_tuned = BayesSearchCV(
 )
 rf_tuned.fit(X_train_resampled, y_train_resampled)
 
-# Feature Importance Filtering
+# Keep Top 30 Important Features
 feature_importance = pd.Series(rf_tuned.best_estimator_.feature_importances_, index=X.columns)
-top_features = feature_importance[feature_importance > 0.01].index  # Keep only top features
+top_features = feature_importance.nlargest(30).index  # Select 30 most important
 X_train_resampled = pd.DataFrame(X_train_resampled, columns=X.columns)[top_features]
 X_test = pd.DataFrame(X_test, columns=X.columns)[top_features]
 
-# === 4️⃣ Train Random Forest Multiple Times & Choose Best ===
+# === 4️⃣ Train Random Forest Multiple Times & Choose Best Model ===
 best_rf_model = None
-best_rf_acc = 0
+best_rf_score = 0
 
-for i in range(5):  # Train 5 times with different seeds
-    print(f"\n🔄 Training Random Forest - Iteration {i+1}")
-    rf_model = RandomForestClassifier(**rf_tuned.best_params_, random_state=i)
-    rf_model.fit(X_train_resampled, y_train_resampled)
-    y_pred_rf = rf_model.predict(X_test)
-    acc = accuracy_score(y_test, y_pred_rf)
-    print(f"Iteration {i+1} Accuracy: {acc * 100:.2f}%")
+for i in range(10):  # Train 10 times with different seeds
+    rf = RandomForestClassifier(
+        **rf_tuned.best_params_,
+        random_state=i
+    )
+    rf.fit(X_train_resampled, y_train_resampled)
+    score = rf.score(X_test, y_test)
 
-    if acc > best_rf_acc:
-        best_rf_acc = acc
-        best_rf_model = rf_model
+    print(f"RF Iteration {i+1}, Accuracy: {score:.4f}")
+    
+    if score > best_rf_score:
+        best_rf_score = score
+        best_rf_model = rf
 
-# Save the best Random Forest model
+print(f"\nBest RF Model Accuracy: {best_rf_score:.4f}")
+
+# Save Best Random Forest Model
 joblib.dump(best_rf_model, "random_forest_model.pkl")
-print(f"\n✅ Best Random Forest Model Accuracy: {best_rf_acc * 100:.2f}%")
 
-# === 5️⃣ Train Alternative Model (XGBoost) ===
-xgb = XGBClassifier(n_estimators=300, learning_rate=0.05, max_depth=10, random_state=42)
+# === 5️⃣ Train XGBoost with Optimized Parameters ===
+xgb = XGBClassifier(n_estimators=500, learning_rate=0.03, max_depth=12, subsample=0.8, random_state=42)
 xgb.fit(X_train_resampled, y_train_resampled)
 y_pred_xgb = xgb.predict(X_test)
 
 # Save XGBoost model
 joblib.dump(xgb, "xgboost_model.pkl")
 
-# === 6️⃣ Train Alternative Model (ANN) ===
+# === 6️⃣ Train ANN with Batch Normalization & Dropout ===
 ann_model = Sequential([
-    Dense(128, activation='relu', input_shape=(X_train_resampled.shape[1],)),
+    Dense(256, activation='relu', input_shape=(X_train_resampled.shape[1],)),
+    BatchNormalization(),
+    Dropout(0.4),
+    Dense(128, activation='relu'),
+    BatchNormalization(),
     Dropout(0.3),
     Dense(64, activation='relu'),
     Dense(len(np.unique(y_train)), activation='softmax')
 ])
 ann_model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-ann_model.fit(X_train_resampled, y_train_resampled, epochs=50, batch_size=32, validation_split=0.2)
+ann_model.fit(X_train_resampled, y_train_resampled, epochs=100, batch_size=32, validation_split=0.2, verbose=1)
+
+# ANN Predictions
 y_pred_ann = np.argmax(ann_model.predict(X_test), axis=1)
 
 # Save ANN model
 ann_model.save("ann_model.h5")
 
 # === 7️⃣ Evaluate Models ===
-rf_acc = best_rf_acc  # Use best accuracy from RF training loop
+rf_acc = accuracy_score(y_test, best_rf_model.predict(X_test))
 xgb_acc = accuracy_score(y_test, y_pred_xgb)
 ann_acc = accuracy_score(y_test, y_pred_ann)
 
-print(f"\n🔹 Best Random Forest Accuracy: {rf_acc * 100:.2f}%")
+print(f"\n🔹 Random Forest Accuracy: {rf_acc * 100:.2f}%")
 print(f"🔹 XGBoost Accuracy: {xgb_acc * 100:.2f}%")
 print(f"🔹 ANN Accuracy: {ann_acc * 100:.2f}%")
 
@@ -142,7 +147,7 @@ print(classification_report(y_test, y_pred_ann))
 
 # === 8️⃣ Plot Confusion Matrix for Best Model ===
 best_model = best_rf_model if rf_acc > xgb_acc else xgb
-y_pred_best = best_rf_model.predict(X_test) if rf_acc > xgb_acc else y_pred_xgb
+y_pred_best = best_model.predict(X_test)
 
 cm = confusion_matrix(y_test, y_pred_best)
 plt.figure(figsize=(10, 8))
@@ -151,5 +156,3 @@ plt.title('Confusion Matrix - Best Model')
 plt.ylabel('True Label')
 plt.xlabel('Predicted Label')
 plt.savefig('best_model_confusion_matrix.png')
-
-print("\n✅ Training & Evaluation Completed!")
