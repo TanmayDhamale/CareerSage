@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 # Load Dataset
-df = pd.read_csv("/Users/tanmay/Developer/CareerSage/careersage-backend/career_recommend ation_processed_numeric.csv")
+df = pd.read_csv("/Users/tanmay/Developer/CareerSage/careersage-backend/career_recommendation_processed_numeric.csv")
 
 # Ensure Column Names Are Clean
 df.columns = df.columns.str.strip()
@@ -81,11 +81,11 @@ def build_improved_ann(input_dim, output_dim, dropout_rate=0.3):
     model = Sequential([
         Input(shape=(input_dim,)),
         BatchNormalization(),
+        Dense(512, activation='relu'),
+        Dropout(dropout_rate),
         Dense(256, activation='relu'),
         Dropout(dropout_rate),
         Dense(128, activation='relu'),
-        Dropout(dropout_rate),
-        Dense(64, activation='relu'),
         Dropout(dropout_rate/2),
         Dense(output_dim, activation='softmax')
     ])
