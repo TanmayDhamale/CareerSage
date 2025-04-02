@@ -60,8 +60,8 @@ rf = RandomForestClassifier(random_state=42)
 rf_params = {
     'n_estimators': (100, 1000),
     'max_depth': (10, 100),
-    'min_samples_split': (2, 10),
-    'min_samples_leaf': (1, 5),
+    'min_samples_split': (4, 20),
+    'min_samples_leaf': (2, 10),
     'bootstrap': [True, False]
 }
 
